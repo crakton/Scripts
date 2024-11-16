@@ -1,0 +1,172 @@
+#!/bin/bash
+
+# Function to print section headers
+print_header() {
+    echo -e "\n==== $1 ====\n"
+}
+
+# Function to prompt for confirmation
+confirm() {
+    read -p "$1 (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Function to check command existence
+check_command() {
+    if ! command -v $1 &> /dev/null; then
+        echo "Installing $1..."
+        sudo apt install -y $1
+    fi
+}
+
+# Check if script is run with sudo
+if [ "$EUID" -ne 0 ]; then 
+    echo "Please run this script as root (with sudo)"
+    exit 1
+fi
+
+# Preserve the actual user's home directory
+ACTUAL_USER=$(logname || whoami)
+ACTUAL_HOME=$(eval echo ~$ACTUAL_USER)
+
+# Check and install necessary tools
+print_header "Checking required tools"
+check_command fdupes
+check_command bleachbit
+check_command deborphan
+
+# Create a backup of important configuration files
+print_header "Creating backup of package lists"
+mkdir -p $ACTUAL_HOME/system-cleanup-backup
+dpkg --get-selections > $ACTUAL_HOME/system-cleanup-backup/package-selection-$(date +%F).txt
+cp /etc/apt/sources.list $ACTUAL_HOME/system-cleanup-backup/
+cp -r /etc/apt/sources.list.d $ACTUAL_HOME/system-cleanup-backup/
+
+# Update package lists
+print_header "Updating package lists"
+apt update
+
+# Remove unused packages and clean package cache
+print_header "Cleaning package cache and removing unused packages"
+apt clean
+apt autoclean
+apt autoremove --purge
+
+# Remove old kernels except the current and previous version
+print_header "Removing old kernels"
+dpkg -l 'linux-*' | sed '/^ii/!d;/'"$(uname -r | sed "s/\(.*\)-\([^0-9]\+\)/\1/")"'/d;s/^[^ ]* [^ ]* \([^ ]*\).*/\1/;/[0-9]/!d' | grep -v $(uname -r) | tail -n +2 | xargs apt -y purge
+
+# Clean up broken packages
+print_header "Fixing broken packages"
+dpkg --configure -a
+apt install -f
+
+# Remove orphaned packages
+print_header "Removing orphaned packages"
+ORPHANED=$(deborphan)
+if [ ! -z "$ORPHANED" ]; then
+    echo "Found orphaned packages:"
+    echo "$ORPHANED"
+    if confirm "Do you want to remove these orphaned packages?"; then
+        apt-get remove --purge $(deborphan)
+    fi
+fi
+
+# Clean user cache
+print_header "Cleaning user cache"
+rm -rf $ACTUAL_HOME/.cache/thumbnails/*
+rm -rf $ACTUAL_HOME/.cache/mozilla/firefox/*cache*
+rm -rf $ACTUAL_HOME/.cache/chromium/*cache*
+rm -rf $ACTUAL_HOME/.cache/google-chrome/*cache*
+
+# Remove old logs
+print_header "Cleaning old logs"
+find /var/log -type f -name "*.log.*" -delete
+find /var/log -type f -name "*.gz" -delete
+truncate -s 0 /var/log/*.log
+
+# Clean temporary files
+print_header "Cleaning temporary files"
+rm -rf /tmp/*
+rm -rf /var/tmp/*
+
+# Find and remove duplicate files in Home directory
+print_header "Checking for duplicate files in Home directory"
+if confirm "Do you want to scan for duplicate files in your home directory? (This might take a while)"; then
+    mkdir -p $ACTUAL_HOME/duplicate-files-list
+    DUPEFILE=$ACTUAL_HOME/duplicate-files-list/duplicates-$(date +%F).txt
+    echo "Scanning for duplicates... This might take a while..."
+    fdupes -r $ACTUAL_HOME > "$DUPEFILE"
+    chown $ACTUAL_USER:$ACTUAL_USER "$DUPEFILE"
+    if [ -s "$DUPEFILE" ]; then
+        echo "Found duplicate files. List saved to: $DUPEFILE"
+        echo "Please review the file and manually delete duplicates."
+    else
+        echo "No duplicates found."
+        rm "$DUPEFILE"
+    fi
+fi
+
+# Run BleachBit for deeper cleaning
+print_header "Running BleachBit cleaning"
+if confirm "Do you want to run BleachBit for deeper system cleaning?"; then
+    # Create a list of safe cleaners
+    CLEANERS=(
+        "system.cache"
+        "system.localizations"
+        "system.trash"
+        "system.tmp"
+        "system.memory"
+        "firefox.cache"
+        "firefox.crash_reports"
+        "firefox.url_history"
+        "firefox.vacuum"
+        "chromium.cache"
+        "chromium.history"
+        "chromium.vacuum"
+    )
+    
+    # Run cleaners with proper permissions
+    echo "Running BleachBit cleaners..."
+    for cleaner in "${CLEANERS[@]}"; do
+        echo "Running cleaner: $cleaner"
+        bleachbit --clean "$cleaner" 2>/dev/null || true
+    done
+    
+    # Run as the actual user for some cleaners
+    sudo -u $ACTUAL_USER bleachbit --clean "thumbnails.cache" 2>/dev/null || true
+fi
+
+# Final package cleanup
+print_header "Final package cleanup"
+apt autoremove --purge
+apt clean
+
+# Show disk usage before and after
+print_header "Disk space freed"
+df -h /
+
+# Create cleanup summary
+print_header "Creating cleanup summary"
+SUMMARY=$ACTUAL_HOME/system-cleanup-backup/cleanup-summary-$(date +%F).txt
+echo "System Cleanup Summary ($(date))" > "$SUMMARY"
+echo "================================" >> "$SUMMARY"
+echo "" >> "$SUMMARY"
+echo "Disk Usage:" >> "$SUMMARY"
+df -h / >> "$SUMMARY"
+echo "" >> "$SUMMARY"
+echo "Package Status:" >> "$SUMMARY"
+dpkg --get-selections | grep -v deinstall | wc -l >> "$SUMMARY"
+chown $ACTUAL_USER:$ACTUAL_USER "$SUMMARY"
+
+echo "Cleanup complete! Summary saved to: $SUMMARY"
+echo "Backup of package lists saved in: $ACTUAL_HOME/system-cleanup-backup/"
+echo ""
+echo "Recommendations:"
+echo "1. Review duplicate files list in: $ACTUAL_HOME/duplicate-files-list/ (if generated)"
+echo "2. Check cleanup summary in: $SUMMARY"
+echo "3. Consider rebooting your system"

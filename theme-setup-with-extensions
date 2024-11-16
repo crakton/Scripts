@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# Function to check if a command succeeded
+check_error() {
+    if [ $? -ne 0 ]; then
+        echo "Error: $1"
+        exit 1
+    fi
+}
+
+echo "Setting up GNOME Shell theme support..."
+
+# Install required packages
+echo "Installing required packages..."
+sudo apt update
+sudo apt install -y \
+    gnome-tweaks \
+    gnome-shell-extensions \
+    chrome-gnome-shell \
+    gnome-shell-extension-manager
+
+# Enable User Themes extension using extension manager CLI
+echo "Installing User Themes extension..."
+
+# For Pop!_OS we need to ensure the extension is properly installed
+EXTENSION_PATH="$HOME/.local/share/gnome-shell/extensions/user-theme@gnome-shell-extensions.gcampax.github.com"
+
+if [ ! -d "$EXTENSION_PATH" ]; then
+    # Create extensions directory if it doesn't exist
+    mkdir -p ~/.local/share/gnome-shell/extensions
+    
+    # Clone the user themes extension
+    git clone https://github.com/GNOME/gnome-shell-extensions.git /tmp/gnome-shell-extensions
+    
+    # Move the user-theme extension to the correct location
+    cp -r /tmp/gnome-shell-extensions/extensions/user-theme "$EXTENSION_PATH"
+    
+    # Cleanup
+    rm -rf /tmp/gnome-shell-extensions
+fi
+
+# Create the shell theme directory
+mkdir -p ~/.themes/Orchis-Purple-Dark/gnome-shell
+
+# Install Orchis theme with shell theme support
+echo "Installing Orchis theme with shell support..."
+if [ -d "Orchis-theme" ]; then
+    rm -rf Orchis-theme
+fi
+git clone https://github.com/vinceliuice/Orchis-theme.git
+cd Orchis-theme
+./install.sh --theme purple --shell
+cd ..
+
+# Enable the User Themes extension
+gnome-extensions enable user-theme@gnome-shell-extensions.gcampax.github.com
+
+# Apply the shell theme
+gsettings set org.gnome.shell.extensions.user-theme name 'Orchis-Purple-Dark'
+
+echo "Shell theme setup complete!"
+echo ""
+echo "Important: You need to do the following:"
+echo "1. Log out and log back in"
+echo "2. Open Extensions (or Extensions Manager) from your applications"
+echo "3. Make sure 'User Themes' is enabled (toggle it on if it's off)"
+echo "4. Open GNOME Tweaks and go to 'Appearance'"
+echo "5. You should now see 'Shell' option available to select themes"
+echo ""
+echo "If the Shell theme option is still not available:"
+echo "1. Press Alt+F2"
+echo "2. Type 'r' and press Enter to restart GNOME Shell"
+echo "3. Open Tweaks again and check the Shell theme option"

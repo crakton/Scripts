@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# Configuration
+DRIVE="/dev/sda"  # Change this to your Samsung drive's device path
+THRESHOLD_UNCORRECTABLE=78020  # Current value + small buffer
+THRESHOLD_REALLOCATED=270      # Current value + small buffer
+LOG_FILE="/var/log/ssd_health.log"
+ALERT_EMAIL="your_email@domain.com"  # Change this
+
+# Function to log messages
+log_message() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# Function to check SMART attributes
+check_smart_health() {
+    # Get current values
+    local uncorrectable=$(smartctl -A $DRIVE | grep "Reported_Uncorrect" | awk '{print $10}')
+    local reallocated=$(smartctl -A $DRIVE | grep "Reallocated_Sector_Ct" | awk '{print $10}')
+    local temperature=$(smartctl -A $DRIVE | grep "Airflow_Temperature_Cel" | awk '{print $10}')
+    
+    # Check uncorrectable errors
+    if [ "$uncorrectable" -gt "$THRESHOLD_UNCORRECTABLE" ]; then
+        log_message "WARNING: Uncorrectable errors increased to $uncorrectable"
+        echo "WARNING: SSD Uncorrectable errors increased" | mail -s "SSD Health Alert" $ALERT_EMAIL
+    fi
+    
+    # Check reallocated sectors
+    if [ "$reallocated" -gt "$THRESHOLD_REALLOCATED" ]; then
+        log_message "WARNING: Reallocated sectors increased to $reallocated"
+        echo "WARNING: SSD Reallocated sectors increased" | mail -s "SSD Health Alert" $ALERT_EMAIL
+    fi
+    
+    # Log current status
+    log_message "Health Check - Uncorrectable: $uncorrectable, Reallocated: $reallocated, Temp: ${temperature}°C"
+}
+
+# Function to check TRIM status
+check_trim() {
+    if ! fstrim -v / >> "$LOG_FILE" 2>&1; then
+        log_message "ERROR: TRIM operation failed"
+        echo "ERROR: SSD TRIM operation failed" | mail -s "SSD Health Alert" $ALERT_EMAIL
+    fi
+}
+
+# Main execution
+log_message "Starting SSD health check"
+check_smart_health
+check_trim
+
+# Add to crontab:
+# 0 */6 * * * /path/to/ssd_monitor.sh

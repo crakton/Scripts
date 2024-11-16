@@ -1,0 +1,146 @@
+#!/bin/bash
+
+# Function to check if a command succeeded
+check_error() {
+    if [ $? -ne 0 ]; then
+        echo "Error: $1"
+        exit 1
+    fi
+}
+
+# Function to suppress RT scheduler warnings
+suppress_warnings() {
+    "$@" 2> >(grep -v "Failed to set RT scheduler" >&2)
+}
+
+echo "Starting theme installation..."
+
+# Create necessary directories
+mkdir -p ~/.themes
+mkdir -p ~/.icons
+mkdir -p ~/.config/gtk-3.0
+mkdir -p ~/.config/gtk-4.0
+
+# Install required packages
+echo "Installing required packages..."
+suppress_warnings sudo apt update
+suppress_warnings sudo apt install -y \
+    gnome-tweaks \
+    sassc \
+    gtk2-engines-murrine \
+    gtk2-engines-pixbuf \
+    git \
+    papirus-icon-theme \
+    gnome-shell-extensions \
+    dconf-editor
+check_error "Failed to install required packages"
+
+# Optional: Configure GNOME performance settings
+echo "Configuring GNOME performance settings..."
+gsettings set org.gnome.desktop.interface enable-animations true
+gsettings set org.gnome.mutter dynamic-workspaces true
+gsettings set org.gnome.desktop.interface gtk-enable-primary-paste true
+
+# Install Orchis theme
+echo "Installing Orchis theme..."
+if [ -d "Orchis-theme" ]; then
+    rm -rf Orchis-theme
+fi
+git clone https://github.com/vinceliuice/Orchis-theme.git
+check_error "Failed to clone Orchis theme"
+cd Orchis-theme
+suppress_warnings ./install.sh --theme purple
+check_error "Failed to install Orchis theme"
+cd ..
+
+# Configure Papirus icons
+echo "Configuring Papirus icons..."
+if [ -d ~/.icons/Papirus-Purple-Dark ]; then
+    rm -rf ~/.icons/Papirus-Purple-Dark
+fi
+cp -r /usr/share/icons/Papirus-Dark ~/.icons/Papirus-Purple-Dark
+check_error "Failed to copy Papirus icons"
+
+# Configure GTK-3.0
+echo "Configuring GTK-3.0..."
+cat > ~/.config/gtk-3.0/settings.ini << EOF
+[Settings]
+gtk-theme-name=Orchis-Purple-Dark
+gtk-icon-theme-name=Papirus-Dark
+gtk-font-name=Ubuntu 11
+gtk-cursor-theme-name=Adwaita
+gtk-cursor-theme-size=0
+gtk-toolbar-style=GTK_TOOLBAR_BOTH_HORIZ
+gtk-toolbar-icon-size=GTK_ICON_SIZE_LARGE_TOOLBAR
+gtk-button-images=1
+gtk-menu-images=1
+gtk-enable-event-sounds=1
+gtk-enable-input-feedback-sounds=1
+gtk-xft-antialias=1
+gtk-xft-hinting=1
+gtk-xft-hintstyle=hintfull
+gtk-xft-rgba=rgb
+gtk-application-prefer-dark-theme=1
+EOF
+
+# Configure GTK-4.0
+echo "Configuring GTK-4.0..."
+cat > ~/.config/gtk-4.0/settings.ini << EOF
+[Settings]
+gtk-theme-name=Orchis-Purple-Dark
+gtk-icon-theme-name=Papirus-Dark
+gtk-font-name=Ubuntu 11
+gtk-cursor-theme-name=Adwaita
+gtk-cursor-theme-size=0
+gtk-application-prefer-dark-theme=1
+EOF
+
+# Configure GTK-4.0 CSS
+echo "Creating GTK-4.0 CSS customizations..."
+mkdir -p ~/.config/gtk-4.0
+rm -f ~/.config/gtk-4.0/gtk.css
+cat > ~/.config/gtk-4.0/gtk.css << EOF
+@define-color accent_color #2B2640;
+@define-color accent_bg_color #2B2640;
+@define-color accent_fg_color #ffffff;
+@define-color window_bg_color #1a1b26;
+@define-color window_fg_color #a9b1d6;
+
+/* Optional: Add some custom CSS for better performance */
+* {
+    animation-duration: 0.2s;
+    transition-duration: 0.2s;
+}
+
+.window-frame {
+    box-shadow: none;
+    margin: 0;
+}
+EOF
+
+# Apply theme settings
+echo "Applying theme settings..."
+suppress_warnings gsettings set org.gnome.desktop.interface gtk-theme "Orchis-Purple-Dark"
+suppress_warnings gsettings set org.gnome.desktop.interface icon-theme "Papirus-Dark"
+suppress_warnings gsettings set org.gnome.desktop.interface color-scheme "prefer-dark"
+
+# Optional: Configure GNOME Shell for better performance
+echo "Configuring GNOME Shell performance settings..."
+gsettings set org.gnome.desktop.interface enable-hot-corners false
+gsettings set org.gnome.mutter center-new-windows true
+gsettings set org.gnome.desktop.wm.preferences focus-mode 'click'
+
+echo "✓ Theme installation complete!"
+echo ""
+echo "Please follow these steps to complete setup:"
+echo "1. Log out and log back in"
+echo "2. Open GNOME Extensions Manager (if not already installed, find it in Pop Shop)"
+echo "3. Enable 'User Themes' extension"
+echo "4. Open GNOME Tweaks to adjust theme settings"
+echo ""
+echo "Optional tweaks available in GNOME Tweaks:"
+echo "- Adjust font scaling"
+echo "- Configure window titlebars"
+echo "- Modify workspace behavior"
+echo ""
+echo "To further customize performance, you can use dconf-editor"

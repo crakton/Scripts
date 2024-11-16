@@ -1,0 +1,129 @@
+#!/bin/bash
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then 
+    echo "Please run this script as root (with sudo)"
+    exit 1
+fi
+
+# Function to print section headers
+print_header() {
+    echo -e "\n==== $1 ====\n"
+}
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Install required tools if missing
+check_and_install_tools() {
+    local tools=("smartmontools" "hdparm" "fstrim" "nvme-cli")
+    
+    for tool in "${tools[@]}"; do
+        if ! command_exists "$tool"; then
+            echo "Installing $tool..."
+            apt-get install -y "$tool"
+        fi
+    done
+}
+
+# Get SSD information
+get_ssd_info() {
+    print_header "SSD Information"
+    
+    # List all SSDs
+    echo "Detected SSDs:"
+    lsblk -d -o name,rota,size,model | grep "0"
+    
+    # For each SSD, get detailed info
+    for drive in $(lsblk -d -o name,rota | grep "0" | cut -d' ' -f1); do
+        echo -e "\nChecking /dev/$drive:"
+        
+        # Check if it's an NVMe drive
+        if [[ $drive == nvme* ]]; then
+            nvme smart-log /dev/$drive
+        else
+            smartctl -a /dev/$drive
+        fi
+        
+        # Check TRIM status
+        hdparm -I /dev/$drive | grep -i TRIM
+    done
+}
+
+# Check and optimize mount options
+check_mount_options() {
+    print_header "Checking Mount Options"
+    
+    echo "Current mount options:"
+    findmnt -t ext4,xfs,btrfs -o SOURCE,TARGET,FSTYPE,OPTIONS | grep "^/dev"
+    
+    echo -e "\nRecommended mount options for SSDs:"
+    echo "noatime,commit=60,barrier=0"
+}
+
+# Perform TRIM
+perform_trim() {
+    print_header "Performing TRIM"
+    
+    echo "Running fstrim on all mounted filesystems..."
+    fstrim -av
+}
+
+# Check disk health
+check_disk_health() {
+    print_header "Disk Health Check"
+    
+    for drive in $(lsblk -d -o name,rota | grep "0" | cut -d' ' -f1); do
+        echo -e "\nChecking health of /dev/$drive:"
+        if [[ $drive == nvme* ]]; then
+            nvme smart-log /dev/$drive | grep -E "critical_warning|percentage_used|data_units_written"
+        else
+            smartctl -H /dev/$drive
+            smartctl -A /dev/$drive | grep -E "Wear_Leveling_Count|Media_Wearout_Indicator|Used_Reserved_Block_Count"
+        fi
+    done
+}
+
+# Check I/O scheduler
+check_io_scheduler() {
+    print_header "I/O Scheduler Check"
+    
+    for drive in $(lsblk -d -o name,rota | grep "0" | cut -d' ' -f1); do
+        echo -e "\nCurrent I/O scheduler for /dev/$drive:"
+        cat /sys/block/$drive/queue/scheduler
+        echo "Recommended scheduler for SSDs: none (for NVMe) or mq-deadline (for SATA SSDs)"
+    done
+}
+
+# Main execution
+main() {
+    print_header "SSD Maintenance Script"
+    
+    # Install required tools
+    check_and_install_tools
+    
+    # Run all checks
+    get_ssd_info
+    check_mount_options
+    check_io_scheduler
+    check_disk_health
+    perform_trim
+    
+    print_header "Recommendations"
+    echo "1. Enable periodic TRIM via fstrim.timer:"
+    echo "   sudo systemctl enable fstrim.timer"
+    echo "   sudo systemctl start fstrim.timer"
+    echo
+    echo "2. Consider adjusting the following in /etc/sysctl.conf:"
+    echo "   vm.swappiness=10"
+    echo "   vm.vfs_cache_pressure=50"
+    echo
+    echo "3. Check your SSD firmware is up to date"
+    echo
+    echo "4. Monitor write amplification by checking Data_Units_Written regularly"
+}
+
+# Run main function
+main

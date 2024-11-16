@@ -1,0 +1,118 @@
+#!/bin/bash
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then 
+    echo "Please run this script as root (with sudo)"
+    exit 1
+fi
+
+# Function to print section headers
+print_header() {
+    echo -e "\n==== $1 ====\n"
+}
+
+# Function to get total RAM in GB
+get_total_ram() {
+    echo "$(free -g | awk '/^Mem:/{print $2}')"
+}
+
+# Function to get current swap size in GB
+get_swap_size() {
+    echo "$(free -g | awk '/^Swap:/{print $2}')"
+}
+
+# Calculate recommended swap size based on RAM
+calculate_swap_size() {
+    local ram_size=$1
+    local swap_size
+
+    # For systems with 16GB+ RAM, we can use a smaller swap
+    # Formula: if RAM <= 16GB: swap = RAM
+    #         if RAM > 16GB: swap = sqrt(RAM)
+    if [ $ram_size -le 16 ]; then
+        swap_size=$ram_size
+    else
+        # Calculate square root and round up
+        swap_size=$(echo "sqrt($ram_size)" | bc)
+    fi
+
+    echo $swap_size
+}
+
+# Display current system information
+print_header "Current System Information"
+echo "Total RAM: $(get_total_ram) GB"
+echo "Current Swap Size: $(get_swap_size) GB"
+echo "Swap Usage:"
+swapon --show
+echo
+echo "Current Swappiness: $(cat /proc/sys/vm/swappiness)"
+
+# Calculate recommended swap size
+RAM_SIZE=$(get_total_ram)
+RECOMMENDED_SWAP=$(calculate_swap_size $RAM_SIZE)
+
+print_header "Recommended Configuration"
+echo "Recommended Swap Size: ${RECOMMENDED_SWAP} GB"
+echo "Recommended Swappiness: 10"
+
+# Ask for confirmation
+read -p "Would you like to optimize swap configuration? (y/n) " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    print_header "Optimizing Swap Configuration"
+    
+    # Disable current swap
+    echo "Disabling current swap..."
+    swapoff -a
+
+    # Backup fstab
+    cp /etc/fstab /etc/fstab.backup
+    echo "Created backup of /etc/fstab at /etc/fstab.backup"
+
+    # Remove old swap file if it exists
+    if [ -f /swapfile ]; then
+        echo "Removing old swap file..."
+        rm /swapfile
+    fi
+
+    # Create new swap file
+    echo "Creating new ${RECOMMENDED_SWAP}GB swap file..."
+    fallocate -l ${RECOMMENDED_SWAP}G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+
+    # Update fstab if needed
+    if ! grep -q "/swapfile none swap" /etc/fstab; then
+        echo "/swapfile none swap sw 0 0" >> /etc/fstab
+    fi
+
+    # Optimize swappiness
+    echo "Setting swappiness to 10..."
+    sysctl -w vm.swappiness=10
+    echo "vm.swappiness=10" > /etc/sysctl.d/99-swappiness.conf
+
+    # Set up optimal memory management
+    echo "Optimizing memory management..."
+    echo "vm.vfs_cache_pressure=50" >> /etc/sysctl.d/99-swappiness.conf
+    echo "vm.dirty_background_ratio=5" >> /etc/sysctl.d/99-swappiness.conf
+    echo "vm.dirty_ratio=10" >> /etc/sysctl.d/99-swappiness.conf
+    sysctl -p
+
+    print_header "New Swap Configuration"
+    echo "New Swap Setup:"
+    swapon --show
+    echo
+    echo "New Swappiness: $(cat /proc/sys/vm/swappiness)"
+    
+    print_header "Optimization Complete"
+    echo "Changes made:"
+    echo "1. Created new ${RECOMMENDED_SWAP}GB swap file"
+    echo "2. Set swappiness to 10"
+    echo "3. Optimized memory management parameters"
+    echo
+    echo "Please reboot your system for changes to take full effect."
+else
+    echo "No changes made to swap configuration."
+fi
